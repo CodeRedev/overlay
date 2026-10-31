@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stream Overlay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#000; }
+  #stage { position:absolute; left:50%; top:50%; width:1080px; height:1920px; transform-origin:center; }
+  canvas { position:absolute; inset:0; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="bg" width="1080" height="1920"></canvas></div>
+
+<script>
+/* ===== EDIT THESE ===== */
+const CONFIG = {
+  particles: 90,
+  funny: true,                 // false = background only
+  rangeY: 398,                 // the "floor" the bots pop up from (just above your gameplay)
+  callouts: ["1 tap", "ez", "no re", "sit", "next", "ace?", "diff"]   // random word next to some headshots
+};
+/* ====================== */
+
+const W = 1080, H = 1920;
+const stage = document.getElementById('stage'), ctx = document.getElementById('bg').getContext('2d');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const rnd = (a,b)=> a + Math.random()*(b-a);
+const ease = x => 1 - Math.pow(1-x,3);
+const F = '"Orbitron","Segoe UI",sans-serif';
+function fit(){ stage.style.transform = `translate(-50%,-50%) scale(${Math.min(innerWidth/W, innerHeight/H)})`; }
+addEventListener('resize', fit); fit();
+if (document.fonts) document.fonts.load('700 24px Orbitron');
+
+/* ---------- background: same dark particles as before ---------- */
+const ps = Array.from({length:CONFIG.particles}, ()=>({
+  x:rnd(0,W), y:rnd(0,H), r:rnd(1,3.2), vy:rnd(.07,.3), vx:rnd(-.09,.09),
+  ph:rnd(0,6.28), sp:rnd(.006,.022), glow:Math.random()<.12
+}));
+function background(){
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#000000'); bg.addColorStop(.6,'#010608'); bg.addColorStop(1,'#03161f');
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+  const g = ctx.createRadialGradient(240,1750,0,240,1750,650);
+  g.addColorStop(0,'rgba(11,159,204,.12)'); g.addColorStop(1,'rgba(11,159,204,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  for (const p of ps){
+    if (!reduce){ p.y -= p.vy; p.x += p.vx; }
+    p.ph += p.sp;
+    if (p.y < -10) { p.y = H+10; p.x = rnd(0,W); }
+    if (p.x < -10) p.x = W+10; if (p.x > W+10) p.x = -10;
+    const a = .2 + .5*Math.sin(p.ph)**2;
+    if (p.glow){
+      const gr = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,p.r*8);
+      gr.addColorStop(0,`rgba(60,180,220,${a*.5})`); gr.addColorStop(1,'rgba(11,159,204,0)');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(p.x,p.y,p.r*8,0,6.283); ctx.fill();
+    }
+    ctx.fillStyle = `rgba(200,230,240,${a})`;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,6.283); ctx.fill();
+  }
+}
+
+/* ---------- funny bit: aim-range with goofy bots, one-tap crosshair ---------- */
+const ZY = CONFIG.rangeY;
+const bots = [], pops = [], sparks = [];
+const cross = { x:540, y:ZY-90, lastShot:-1e9, hit:-1e9 };
+let nextBot = performance.now()+800, hs = 0;
+
+function drawBot(b,t){
+  const age = t-b.born, up = ease(Math.min(1,age/260));
+  let off = (1-up)*140, rot = 0, alpha = 1, dead = b.hitAt != null;
+  if (dead){ const k = Math.min(1,(t-b.hitAt)/520); rot = -1.25*ease(k); off += k*30; alpha = 1-Math.max(0,(k-.5)*2); }
+  const bob = dead ? 0 : Math.sin(t/260+b.ph)*3;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0,0,W,ZY); ctx.clip();            // bots rise out of the floor line
+  ctx.globalAlpha = alpha;
+  ctx.translate(b.x, ZY+off); ctx.rotate(rot);
+  // body
+  ctx.fillStyle = '#c9d6de'; ctx.strokeStyle = '#0b2430'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-34,0); ctx.lineTo(-30,-52+bob); ctx.quadraticCurveTo(0,-72+bob,30,-52+bob); ctx.lineTo(34,0); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#0b9fcc'; ctx.fillRect(-12,-44+bob,24,8);   // chest light
+  // head
+  const hy = -92+bob;
+  ctx.fillStyle = dead ? '#ff3b4a' : '#e8eef2'; ctx.beginPath(); ctx.arc(0,hy,27,0,6.283); ctx.fill(); ctx.stroke();
+  // face
+  if (dead){
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 4;
+    for (const ex of [-10,10]){ ctx.beginPath(); ctx.moveTo(ex-5,hy-9); ctx.lineTo(ex+5,hy+1); ctx.moveTo(ex+5,hy-9); ctx.lineTo(ex-5,hy+1); ctx.stroke(); }
+    ctx.fillStyle = '#111'; ctx.beginPath(); ctx.ellipse(0,hy+14,8,6,0,0,6.283); ctx.fill();
+    ctx.fillStyle = '#ff6fa5'; ctx.beginPath(); ctx.ellipse(4,hy+17,5,7,0,0,6.283); ctx.fill();
+  } else {
+    const look = Math.max(-1,Math.min(1,(cross.x-b.x)/200))*3;     // eyes follow the crosshair
+    for (const ex of [-10,10]){ ctx.fillStyle='#fff'; ctx.strokeStyle='#111'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(ex,hy-4,9,0,6.283); ctx.fill(); ctx.stroke();
+      ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(ex+look,hy-3,4,0,6.283); ctx.fill(); }
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0,hy+8,10,.15,Math.PI-.15); ctx.stroke();   // nervous grin
+    ctx.fillStyle = '#7fd4ff'; ctx.beginPath(); ctx.ellipse(24,hy-14+((t/9)%22),3.5,5.5,0,0,6.283); ctx.fill();       // sweat
+  }
+  ctx.restore();
+}
+
+function crosshair(t){
+  const since = t - cross.lastShot, gap = 7 + Math.max(0, 18*(1-since/260));
+  ctx.save(); ctx.translate(cross.x, cross.y - Math.max(0,10*(1-since/180)));
+  if (since < 90){ const f = ctx.createRadialGradient(0,0,0,0,0,46); f.addColorStop(0,'rgba(255,255,255,.9)'); f.addColorStop(1,'rgba(255,230,120,0)'); ctx.fillStyle=f; ctx.beginPath(); ctx.arc(0,0,46,0,6.283); ctx.fill(); }
+  for (const pass of [[6,'#000'],[3,'#27e8ff']]){
+    ctx.lineWidth = pass[0]; ctx.strokeStyle = pass[1]; ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.moveTo(-gap-14,0); ctx.lineTo(-gap,0); ctx.moveTo(gap,0); ctx.lineTo(gap+14,0);
+    ctx.moveTo(0,-gap-14); ctx.lineTo(0,-gap); ctx.moveTo(0,gap); ctx.lineTo(0,gap+14);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#27e8ff'; ctx.beginPath(); ctx.arc(0,0,2.5,0,6.283); ctx.fill();
+  if (t - cross.hit < 160){ ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); for (const [a,b] of [[1,1],[-1,1],[1,-1],[-1,-1]]){ ctx.moveTo(a*12,b*12); ctx.lineTo(a*24,b*24); } ctx.stroke(); }   // hit marker
+  ctx.restore();
+}
+
+function range(t){
+  if (t > nextBot && bots.filter(b=>b.hitAt==null).length < 2){
+    bots.push({ x:rnd(270,810), born:t, hitAt:null, ph:rnd(0,6), lock:null });
+    nextBot = t + rnd(1400,2300);
+  }
+  // crosshair picks the oldest bot that's fully up
+  const tgt = bots.find(b => b.hitAt==null && t-b.born > 240);
+  let tx = 540+Math.sin(t/900)*240, ty = ZY-95+Math.cos(t/600)*14;
+  if (tgt){ tx = tgt.x; ty = ZY-92; }
+  cross.x += (tx-cross.x)*.14; cross.y += (ty-cross.y)*.14;
+  if (tgt && Math.hypot(tgt.x-cross.x, ty-cross.y) < 6){
+    if (tgt.lock == null) tgt.lock = t;
+    if (t - tgt.lock > 130){                       // fire!
+      tgt.hitAt = t; cross.lastShot = t; cross.hit = t; hs++;
+      pops.push({ x:tgt.x, y:ZY-130, t0:t, txt:'150', call: Math.random()<.45 ? CONFIG.callouts[Math.floor(Math.random()*CONFIG.callouts.length)] : '' });
+      for (let i=0;i<14;i++){ const a = rnd(0,6.283), v = rnd(2,7); sparks.push({ x:tgt.x, y:ZY-92, vx:Math.cos(a)*v, vy:Math.sin(a)*v-2, life:1 }); }
+    }
+  }
+  for (let i=bots.length-1;i>=0;i--){ drawBot(bots[i],t); if (bots[i].hitAt!=null && t-bots[i].hitAt>700) bots.splice(i,1); }
+  // sparks
+  for (let i=sparks.length-1;i>=0;i--){ const s = sparks[i]; s.x+=s.vx; s.y+=s.vy; s.vy+=.22; s.life-=.03;
+    if (s.life<=0){ sparks.splice(i,1); continue; }
+    ctx.fillStyle = `rgba(255,${180+s.life*60|0},80,${s.life})`; ctx.beginPath(); ctx.arc(s.x,s.y,3.5*s.life+.5,0,6.283); ctx.fill(); }
+  // floating damage numbers
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let i=pops.length-1;i>=0;i--){ const p = pops[i], a = (t-p.t0)/950;
+    if (a>1){ pops.splice(i,1); continue; }
+    const y = p.y - 70*ease(a); ctx.globalAlpha = 1-Math.max(0,(a-.55)/.45);
+    ctx.font = `900 40px ${F}`; ctx.lineWidth = 7; ctx.strokeStyle = '#000'; ctx.strokeText(p.txt,p.x,y);
+    ctx.fillStyle = '#ffe45e'; ctx.fillText(p.txt,p.x,y);
+    if (p.call){ ctx.font = `700 24px ${F}`; ctx.strokeText(p.call,p.x,y+38); ctx.fillStyle = '#fff'; ctx.fillText(p.call,p.x,y+38); }
+    ctx.globalAlpha = 1;
+  }
+  crosshair(t);
+  // scoreboard
+  ctx.font = `700 22px ${F}`; ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';  ctx.fillStyle = '#9fd6e8'; ctx.fillText('HEADSHOTS', 70, 292); ctx.fillStyle = '#ffe45e'; ctx.font = `900 34px ${F}`; ctx.fillText(String(hs), 70, 330);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#9fd6e8'; ctx.font = `700 22px ${F}`; ctx.fillText('MISSES', 1010, 292); ctx.fillStyle = '#ff3b4a'; ctx.font = `900 34px ${F}`; ctx.fillText('0', 1010, 330);
+  // floor line
+  const fl = ctx.createLinearGradient(60,0,1020,0); fl.addColorStop(0,'rgba(11,159,204,0)'); fl.addColorStop(.5,'rgba(11,159,204,.6)'); fl.addColorStop(1,'rgba(11,159,204,0)');
+  ctx.fillStyle = fl; ctx.fillRect(60,ZY,960,2);
+}
+
+function frame(){
+  const t = performance.now();
+  ctx.clearRect(0,0,W,H);
+  background();
+  if (CONFIG.funny) range(t);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
